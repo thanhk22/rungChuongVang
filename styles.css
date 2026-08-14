@@ -469,3 +469,572 @@ input {
     font-size: 30px;
   }
 }
+
+/* =====================================================
+   VỀ ĐÍCH - CHỌN 3 CÂU
+   ===================================================== */
+
+/* Khối tổng của màn hình chọn câu */
+.finish-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Tiêu đề + số câu 0/3 */
+.finish-selection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.finish-selection-header h2 {
+  margin: 0;
+}
+
+/* Số lượng câu đã chọn */
+.finish-selection-count {
+  min-width: 60px;
+  height: 60px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  font-size: 24px;
+  font-weight: 800;
+}
+
+/* Danh sách 3 câu đã chọn */
+.finish-selected-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Một dòng:
+   ① DỄ  10 điểm
+*/
+.finish-selected-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  padding: 14px 18px;
+
+  border-radius: 12px;
+}
+
+/* Số thứ tự */
+.finish-question-number {
+  width: 36px;
+  height: 36px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  font-weight: 800;
+}
+
+/* Tên Dễ/Vừa/Khó */
+.finish-difficulty-name {
+  flex: 1;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+/* Điểm */
+.finish-question-points {
+  font-weight: 700;
+}
+
+/* Khi chưa chọn câu nào */
+.finish-empty-selection {
+  padding: 25px;
+  text-align: center;
+  border-radius: 12px;
+  opacity: 0.7;
+}
+
+/* 3 nút Dễ / Vừa / Khó */
+.finish-difficulty-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+
+.finish-difficulty {
+  min-height: 110px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  gap: 8px;
+}
+
+.finish-difficulty strong {
+  font-size: 25px;
+}
+
+.finish-difficulty span {
+  font-size: 16px;
+}
+
+/* Các nút thao tác */
+.finish-selection-actions {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+/* =====================================================
+   MÀN HÌNH CHUẨN BỊ VỀ ĐÍCH
+   ===================================================== */
+
+.finish-ready {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.finish-ready h2 {
+  margin: 0;
+}
+
+.finish-total-points {
+  font-size: 20px;
+}
+
+.finish-total-points strong {
+  font-size: 26px;
+}
+
+/* =====================================================
+   NGÔI SAO HY VỌNG
+   ===================================================== */
+
+.finish-star {
+  width: 150px;
+  min-height: 150px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  gap: 8px;
+
+  cursor: pointer;
+
+  user-select: none;
+
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease,
+    filter 0.2s ease;
+}
+
+.finish-star:hover {
+  transform: scale(1.05);
+}
+
+.finish-star > span {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Sao sau khi đã sử dụng */
+.finish-star.used {
+  opacity: 0.4;
+  filter: grayscale(1);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.finish-start-button {
+  min-width: 220px;
+}
+
+/* =====================================================
+   RESPONSIVE
+   ===================================================== */
+
+@media (max-width: 700px) {
+
+  .finish-difficulty-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .finish-selected-item {
+    padding: 12px;
+  }
+
+}
+
+/* =====================================================
+   VỀ ĐÍCH - MÀN HÌNH CÂU HỎI
+   ===================================================== */
+
+.finish-question {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  gap: 20px;
+}
+
+/* Thông tin câu */
+.finish-question-info {
+  width: 100%;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 15px;
+}
+
+.finish-question-progress {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.finish-question-difficulty {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Đồng hồ */
+.finish-timer {
+  width: 100px;
+  height: 100px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  font-size: 42px;
+  font-weight: 900;
+
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.finish-timer.danger {
+  animation: finishTimerDanger 0.5s infinite alternate;
+}
+
+@keyframes finishTimerDanger {
+  from {
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.08);
+  }
+}
+
+/* Nội dung câu hỏi */
+.finish-question-text {
+  width: 100%;
+  max-width: 900px;
+
+  padding: 30px;
+
+  border-radius: 16px;
+
+  text-align: center;
+
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+/* Khu vực nhập đáp án */
+.finish-answer-area {
+  width: 100%;
+  max-width: 700px;
+
+  display: flex;
+  gap: 12px;
+}
+
+.finish-answer-input {
+  flex: 1;
+
+  min-height: 55px;
+
+  padding: 0 18px;
+
+  font-size: 20px;
+
+  border-radius: 10px;
+}
+
+.finish-answer-input:disabled {
+  opacity: 0.5;
+}
+
+/* Kết quả */
+.finish-result {
+  min-height: 450px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  gap: 18px;
+
+  text-align: center;
+}
+
+.finish-result-icon {
+  width: 100px;
+  height: 100px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  font-size: 55px;
+  font-weight: 900;
+}
+
+.finish-result-message {
+  font-size: 22px;
+}
+
+.finish-correct-answer {
+  display: flex;
+  flex-direction: column;
+
+  gap: 5px;
+
+  font-size: 18px;
+}
+
+.finish-correct-answer strong {
+  font-size: 25px;
+}
+
+.finish-final-score {
+  font-size: 22px;
+}
+
+.finish-final-score strong {
+  font-size: 32px;
+}
+
+@media (max-width: 700px) {
+
+  .finish-question-info {
+    flex-direction: column;
+  }
+
+  .finish-question-text {
+    font-size: 22px;
+    padding: 20px;
+  }
+
+  .finish-answer-area {
+    flex-direction: column;
+  }
+
+}
+
+/* =====================================================
+   VỀ ĐÍCH - GIÀNH QUYỀN
+   ===================================================== */
+
+.finish-steal-selection {
+  min-height: 450px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  gap: 20px;
+
+  text-align: center;
+}
+
+.finish-steal-title {
+  font-size: 36px;
+  font-weight: 900;
+}
+
+.finish-steal-subtitle {
+  font-size: 20px;
+}
+
+.finish-steal-main-team {
+  font-size: 18px;
+}
+
+.finish-steal-teams {
+  width: 100%;
+  max-width: 600px;
+
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+
+  gap: 15px;
+}
+
+.steal-team-button {
+  min-height: 80px;
+
+  font-size: 20px;
+  font-weight: 800;
+
+  border-radius: 12px;
+
+  cursor: pointer;
+}
+
+.steal-timer {
+  transform: scale(1.1);
+}
+
+@media (max-width: 700px) {
+
+  .finish-steal-teams {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+/* ======================================================
+   TỔNG KẾT VỀ ĐÍCH
+   ====================================================== */
+
+.finish-final-result {
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.finish-ranking {
+  position: relative;
+  width: min(1100px, 95%);
+  height: 560px;
+  margin: 20px auto 0;
+}
+
+
+/* =========================
+   KHỐI XẾP HẠNG CHUNG
+   ========================= */
+
+.finish-rank {
+  position: absolute;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  text-align: center;
+
+  border-radius: 20px;
+  padding: 18px 28px;
+
+  min-width: 190px;
+
+  box-sizing: border-box;
+}
+
+
+/* Huy chương */
+
+.rank-medal {
+  font-size: 42px;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+
+
+/* Tên đội */
+
+.rank-team {
+  font-size: 25px;
+  font-weight: 800;
+}
+
+
+/* Điểm */
+
+.rank-score {
+  margin-top: 8px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+
+/* =========================
+   HẠNG 1
+   GIỮA - CAO NHẤT
+   ========================= */
+
+.finish-rank.rank-1 {
+  left: 50%;
+  top: 0;
+
+  transform: translateX(-50%);
+
+  min-width: 250px;
+  padding: 25px 35px;
+}
+
+
+/* =========================
+   HẠNG 2
+   BÊN TRÁI
+   ========================= */
+
+.finish-rank.rank-2 {
+  left: 8%;
+  top: 185px;
+
+  min-width: 220px;
+}
+
+
+/* =========================
+   HẠNG 3
+   ========================= */
+
+.finish-rank.rank-3 {
+  right: 20%;
+  top: 315px;
+}
+
+
+/* =========================
+   HẠNG 4
+   ========================= */
+
+.finish-rank.rank-4 {
+  right: 15%;
+  top: 315px;
+
+  transform: translateX(calc(100% + 25px));
+}
