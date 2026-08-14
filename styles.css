@@ -340,3 +340,132 @@ input {
     font-size: 24px;
   }
 }
+
+.game-screen {
+  align-items: stretch;
+  justify-content: center;
+  padding-left: 2.5vw;
+  padding-right: 2.5vw;
+}
+
+.game-layout {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 20fr 70fr;
+  align-items: flex-start;
+  gap: 5vw;
+}
+
+.game-layout > .card {
+  width: auto;
+}
+
+.team-panel {
+  padding: 14px;
+}
+
+.main-panel {
+  min-width: 0;
+}
+
+.main-panel h1,
+.main-panel .sub {
+  text-align: left;
+}
+
+.main-panel.final h1 {
+  text-align: center;
+}
+
+.main-panel .sub {
+  margin-bottom: 0;
+}
+
+.main-panel > .team-selector {
+  margin: 20px 0;
+}
+
+.team-panel h2 {
+  font-size: 22px;
+  margin: 0 0 12px;
+}
+
+.team-panel-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.team-panel-actions button {
+  width: 100%;
+  border-radius: 12px;
+  padding: 11px;
+  font-size: 14px;
+}
+
+.team-panel .scoreboard {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.team-panel .score {
+  text-align: left;
+  padding: 9px;
+}
+
+.team-panel .score-total {
+  display: block;
+}
+
+.team-panel .score-total b {
+  font-size: 24px;
+}
+
+.team-panel .score-total span {
+  margin-top: 0;
+  font-size: 11px;
+}
+
+.team-panel .score-branch {
+  gap: 4px;
+  padding: 6px;
+  font-size: 11px;
+}
+
+.team-panel .score-branch b {
+  font-size: 15px;
+}
+
+@media (max-width: 980px) {
+  .game-screen {
+    justify-content: flex-start;
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+
+  .game-layout {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .team-panel,
+  .main-panel {
+    width: 100%;
+    flex: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .game-layout {
+    gap: 18px;
+  }
+
+  .team-panel h2 {
+    font-size: 23px;
+  }
+
+  .main-panel h1 {
+    font-size: 30px;
+  }
+}

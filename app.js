@@ -1,17 +1,30 @@
 const CSV_FILE = 'questions.csv';
+const FINISH_CSV_FILE = 'finish_questions.csv';
 const BRANCHES = [
   { id: 'thieu', label: 'Ngành Thiếu' },
   { id: 'oanh', label: 'Oanh Vũ' },
 ];
+const FINISH_DIFFICULTIES = [
+  { id: 'easy', label: 'Dễ', points: 10 },
+  { id: 'medium', label: 'Trung bình', points: 20 },
+  { id: 'hard', label: 'Khó', points: 30 },
+];
 
-let questions = [];
+let questions = []; // danh sách câu hỏi
+let finishQuestions = [];
 let teams = ['Đội 1', 'Đội 2', 'Đội 3', 'Đội 4'];
 let scores = createEmptyScores();
-let activeTeam = 0;
-let activeBranch = 0;
-let pack = null;
-let pool = [];
-let idx = 0;
+let activeTeam = 0; // đội đang trả lời
+let activeBranch = 0; // ngành đang chọn (0: Thiếu, 1: Oanh)
+let pack = null; // gói câu hỏi đang chọn (1: Khởi động, 2: Vượt chướng ngại vật, 3: Tăng tốc, 4: Về đích)
+let questionSet = null; // bộ câu hỏi đang chọn (chỉ áp dụng cho gói Khởi động)
+let finishPlan = [];
+let finishPool = [];
+let finishIdx = 0;
+let finishResults = [];
+let usedFinishQuestionIds = new Set();
+let pool = []; // danh sách câu hỏi trong gói/bộ đang chọn
+let idx = 0; // chỉ số câu hỏi hiện tại trong pool
 let locked = false;
 let timer = null;
 let timeLeft = 15;
@@ -66,7 +79,7 @@ function mapQuestionsFromCsv(csvText) {
   }
 
   const headers = rows[0].map((header) => header.trim().toLowerCase());
-  const requiredHeaders = ['pack', 'branch', 'question', 'answer_a', 'answer_b', 'answer_c', 'answer_d', 'correct'];
+  const requiredHeaders = ['pack', 'branch', 'set', 'question', 'answer_a', 'answer_b', 'answer_c', 'answer_d', 'correct'];
 
   for (const header of requiredHeaders) {
     if (!headers.includes(header)) {
@@ -86,6 +99,7 @@ function mapQuestionsFromCsv(csvText) {
     const mappedQuestion = {
       pack: Number(record.pack),
       branch,
+      set: Number(record.set),
       q: record.question,
       a: [record.answer_a, record.answer_b, record.answer_c, record.answer_d],
       correct,
@@ -93,6 +107,10 @@ function mapQuestionsFromCsv(csvText) {
 
     if (!Number.isInteger(mappedQuestion.pack)) {
       throw new Error(`Dòng ${rowIndex + 2}: cột pack không hợp lệ.`);
+    }
+
+    if (!Number.isInteger(mappedQuestion.set) || mappedQuestion.set < 1) {
+      throw new Error(`Dòng ${rowIndex + 2}: cột set không hợp lệ.`);
     }
 
     if (!mappedQuestion.q || mappedQuestion.a.some((answer) => !answer)) {
@@ -204,11 +222,31 @@ function getActiveBranchLabel() {
   return BRANCHES[activeBranch].label;
 }
 
+function getPackLabel(packNumber) {
+  const labels = {
+    1: 'KHỞI ĐỘNG',
+    2: 'VƯỢT CHƯỚNG NGẠI VẬT',
+    3: 'TĂNG TỐC',
+    4: 'VỀ ĐÍCH',
+  };
+
+  return labels[packNumber] || `GÓI ${packNumber}`;
+}
+
+function getSetNumbersForPack(packNumber, branchId = getActiveBranchId()) {
+  return [...new Set(questions
+    .filter((question) => question.pack === packNumber && question.branch === branchId)
+    .map((question) => question.set))]
+    .sort((a, b) => a - b);
+}
+
 function getTeamTotal(teamIndex) {
   return scores[teamIndex].reduce((sum, score) => sum + score, 0);
 }
 
 function startSetup(isRenaming = false) {
+  clearInterval(timer);
+
   const heading = isRenaming ? 'Đổi tên 4 đội' : 'Nhập tên 4 đội';
   const buttonLabel = isRenaming ? 'Lưu tên đội →' : 'Bắt đầu cuộc thi →';
 
@@ -235,6 +273,26 @@ function scoreboard() {
       <span>${branch.label}</span><b id="score-${teamIndex}-${branchIndex}">${scores[teamIndex][branchIndex]}</b>
     </div>`).join('')}</div>
   </div>`).join('')}</div>`;
+}
+
+function gameLayout(content, mainClass = '') {
+  return `<div class="screen game-screen">
+    <div class="game-layout">
+      ${teamPanel()}
+      <main class="card main-panel ${mainClass}">${content}</main>
+    </div>
+  </div>`;
+}
+
+function teamPanel() {
+  return `<aside class="card team-panel">
+    <h2>Th&ocirc;ng tin &#273;&#7897;i</h2>
+    <div class="team-panel-actions">
+      <button class="secondary" onclick="startSetup(true)">&#272;&#7893;i t&ecirc;n &#273;&#7897;i</button>
+      <button class="danger" onclick="resetScores()">Reset &#273;i&#7875;m</button>
+    </div>
+    ${scoreboard()}
+  </aside>`;
 }
 
 function teamSelector() {
@@ -277,6 +335,11 @@ function selectTeam(teamIndex) {
 function selectBranch(branchIndex) {
   activeBranch = branchIndex;
 
+  if (document.querySelector('.set-grid')) {
+    showQuestionSets(pack);
+    return;
+  }
+
   if (document.querySelector('.pack-grid')) {
     showPacks();
     return;
@@ -300,40 +363,81 @@ function resetScores() {
 }
 
 function showPacks() {
+  clearInterval(timer);
+  questionSet = null;
+
   const currentBranchId = getActiveBranchId();
   const totalQuestions = questions.filter((question) => question.branch === currentBranchId).length;
   const packCounts = [1, 2, 3, 4].map((packNumber) => questions.filter((question) => question.pack === packNumber && question.branch === currentBranchId).length);
+  const kickoffSetCount = getSetNumbersForPack(1, currentBranchId).length;
 
-  render(`<div class="screen"><div class="card">
+  render(gameLayout(`
     <div class="top">
       <div><h1>🎯 CHỌN GÓI CÂU HỎI</h1><div class="sub">Chọn một trong 4 gói</div></div>
-      <div class="top-actions">
-        <button class="secondary" onclick="startSetup(true)">Đổi tên đội</button>
-        <button class="danger" onclick="resetScores()">Reset điểm</button>
-      </div>
     </div>
-    ${scoreboard()}
     ${selectionControls()}
     <div class="grid pack-grid">
-      <button class="pack" onclick="choosePack(1)" ${packCounts[0] === 0 ? 'disabled' : ''}>🟢 GÓI 1<small>Kiến thức cơ bản · ${packCounts[0]} câu</small></button>
-      <button class="pack" onclick="choosePack(2)" ${packCounts[1] === 0 ? 'disabled' : ''}>🔵 GÓI 2<small>Kiến thức tổng hợp · ${packCounts[1]} câu</small></button>
-      <button class="pack" onclick="choosePack(3)" ${packCounts[2] === 0 ? 'disabled' : ''}>🟡 GÓI 3<small>Logistics · ${packCounts[2]} câu</small></button>
-      <button class="pack" onclick="choosePack(4)" ${packCounts[3] === 0 ? 'disabled' : ''}>🔴 GÓI 4<small>Vu Lan & kỹ năng · ${packCounts[3]} câu</small></button>
+      <button class="pack" onclick="choosePack(1)" ${kickoffSetCount === 0 ? 'disabled' : ''}>🟢 KHỞI ĐỘNG<small>${kickoffSetCount} bộ · ${packCounts[0]} câu</small></button>
+      <button class="pack" onclick="choosePack(2)" ${packCounts[1] === 0 ? 'disabled' : ''}>🔵 VƯỢT CHƯỚNG NGẠI VẬT<small>Gói vượt chướng ngại vật · ${packCounts[1]} câu</small></button>
+      <button class="pack" onclick="choosePack(3)" ${packCounts[2] === 0 ? 'disabled' : ''}>🟡 TĂNG TỐC<small>Gói tăng tốc · ${packCounts[2]} câu</small></button>
+      <button class="pack" onclick="choosePack(4)" ${packCounts[3] === 0 ? 'disabled' : ''}>🔴 VỀ ĐÍCH<small>Gói về đích · ${packCounts[3]} câu</small></button>
     </div>
     <p class="note">Bộ ${getActiveBranchLabel()}: ${totalQuestions} câu. Mỗi câu đúng: +10 điểm cho đội và ngành đang chọn.</p>
-  </div></div>`);
+  `));
 }
 
 function choosePack(selectedPack) {
   pack = selectedPack;
+
+  if (selectedPack === 1) {
+    showQuestionSets(selectedPack);
+    return;
+  }
+
+  questionSet = null;
   pool = questions.filter((question) => question.pack === selectedPack && question.branch === getActiveBranchId());
+  idx = 0;
+  showQuestion();
+}
+
+function showQuestionSets(selectedPack) {
+  clearInterval(timer);
+  pack = selectedPack;
+  questionSet = null;
+
+  const currentBranchId = getActiveBranchId();
+  const setNumbers = getSetNumbersForPack(selectedPack, currentBranchId);
+
+  render(gameLayout(`
+    <div class="top">
+      <div><h1>🟢 ${getPackLabel(selectedPack)}</h1><div class="sub">${getActiveBranchLabel()} · chọn 1 trong ${setNumbers.length} bộ câu hỏi</div></div>
+    </div>
+    ${selectionControls()}
+    <div class="grid set-grid">
+      ${setNumbers.map((setNumber) => {
+        const questionCount = questions.filter((question) => question.pack === selectedPack && question.branch === currentBranchId && question.set === setNumber).length;
+        return `<button class="pack" onclick="chooseQuestionSet(${setNumber})">BỘ ${setNumber}<small>${questionCount} câu</small></button>`;
+      }).join('')}
+    </div>
+    <p class="note">Mỗi bộ Khởi động gồm 10 câu. Hệ thống chỉ hiển thị các bộ thuộc ngành đang chọn.</p>
+  `));
+}
+
+function chooseQuestionSet(selectedSet) {
+  questionSet = selectedSet;
+  pool = questions.filter((question) => question.pack === pack && question.branch === getActiveBranchId() && question.set === selectedSet);
   idx = 0;
   showQuestion();
 }
 
 function showQuestion() {
   if (idx >= pool.length) {
-    showPacks();
+    if (pack === 1) {
+      showQuestionSets(pack);
+    } else {
+      showPacks();
+    }
+
     return;
   }
 
@@ -343,15 +447,14 @@ function showQuestion() {
 
   const question = pool[idx];
 
-  render(`<div class="screen"><div class="card">
-    <div class="top"><div><b>GÓI ${pack}</b> · ${getBranchLabel(question.branch)} · CÂU ${idx + 1}/${pool.length}</div><div class="timer" id="timer">15s</div></div>
-    ${scoreboard()}
+  render(gameLayout(`
+    <div class="top"><div><b>${getPackLabel(pack)}</b>${questionSet ? ` · BỘ ${questionSet}` : ''} · ${getBranchLabel(question.branch)} · CÂU ${idx + 1}/${pool.length}</div><div class="timer" id="timer">15s</div></div>
     ${teamSelector()}
     <div class="q">${escapeHtml(question.q)}</div>
     <div class="answers">${question.a.map((answer, i) => `<button id="ans${i}" onclick="answer(${i})"><b>${String.fromCharCode(65 + i)}.</b> ${escapeHtml(answer)}</button>`).join('')}</div>
     <div id="feedback" class="feedback"></div>
     <div id="nextbox" class="hidden"><button class="next" onclick="nextQuestion()">Câu tiếp theo →</button></div>
-  </div></div>`);
+  `));
 
   timer = setInterval(() => {
     timeLeft--;
@@ -410,9 +513,9 @@ function endGame() {
     })))
     .sort((a, b) => b.score - a.score);
 
-  render(`<div class="screen"><div class="card final"><h1>🏆 KẾT QUẢ CHUNG CUỘC</h1>${scoreboard()}
+  render(gameLayout(`<h1>🏆 KẾT QUẢ CHUNG CUỘC</h1>
     <ol>${ranking.map((item) => `<li><b>${escapeHtml(item.name)}</b> — ${item.score} điểm</li>`).join('')}</ol>
-    <button onclick="showPacks()">Quay lại bảng chọn gói</button></div></div>`);
+    <button onclick="showPacks()">Quay lại bảng chọn gói</button>`, 'final'));
 }
 
 function escapeHtml(value) {
