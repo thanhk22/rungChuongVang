@@ -505,19 +505,8 @@ function selectTeam(teamIndex) {
 }
 
 function selectBranch(branchIndex) {
-
-  // Kiểm tra có thực sự chuyển sang ngành khác hay không.
-  const branchChanged = activeBranch !== branchIndex;
-
   // Cập nhật ngành đang được chọn.
   activeBranch = branchIndex;
-
-  // Nếu chuyển sang ngành khác,
-  // danh sách đội đã tham gia Về đích phải được làm mới.
-  if (branchChanged) {
-    finishPlayedTeams = [];
-    finishPlayedBranch = getActiveBranchId();
-  }
 
   // --------------------------------------------
   // ĐANG Ở MÀN HÌNH CHỌN BỘ KHỞI ĐỘNG
@@ -2572,31 +2561,10 @@ function showFinishFinalResult() {
 
         </div>
 
-        <div class="finish-final-actions">
-
-          <button
-            class="next"
-            onclick="returnToMainProgram()"
-          >
-            ← TRỞ VỀ MÀN HÌNH CHƯƠNG TRÌNH
-          </button>
-
-        </div>
-
       </div>
 
     `)
   );
-}
-
-function returnToMainProgram() {
-
-  clearInterval(timer);
-
-  // Quay về màn hình chứa 4 phần thi:
-  // Khởi động - Vượt chướng ngại vật
-  // Tăng tốc - Về đích
-  showPacks();
 }
 
 // ======================================================
