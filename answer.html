@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>Tăng tốc - Trả lời</title>
+
+    <link
+        rel="stylesheet"
+        href="answer.css"
+    >
+
+</head>
+
+<body>
+
+    <div class="answer-container">
+
+        <!-- ==============================
+             MÀN HÌNH CHỌN ĐỘI
+        =============================== -->
+
+        <div id="teamSelection">
+
+            <h1 id="roundTitle">ĐANG CHỜ</h1>
+
+            <p class="instruction">
+                Hãy chọn đội của bạn
+            </p>
+
+
+            <div class="team-grid">
+
+                <button
+                    class="team-button"
+                    data-team-id="0"
+                >
+                    Đội 1
+                </button>
+
+                <button
+                    class="team-button"
+                    data-team-id="1"
+                >
+                    Đội 2
+                </button>
+
+                <button
+                    class="team-button"
+                    data-team-id="2"
+                >
+                    Đội 3
+                </button>
+
+                <button
+                    class="team-button"
+                    data-team-id="3"
+                >
+                    Đội 4
+                </button>
+
+            </div>
+
+
+            <button
+                id="confirmTeamButton"
+                disabled
+            >
+                XÁC NHẬN
+            </button>
+
+        </div>
+
+
+        <!-- ==============================
+             MÀN HÌNH CHỜ
+        =============================== -->
+
+        <div
+            id="waitingScreen"
+            hidden
+        >
+
+            <h1 id="waitingRoundTitle">ĐANG CHỜ</h1>
+
+            <div
+                id="selectedTeamDisplay"
+                class="selected-team"
+            >
+            </div>
+
+            <p>
+                Đã kết nối với chương trình.
+            </p>
+
+            <p>
+                Vui lòng chờ MC bắt đầu.
+            </p>
+
+        </div>
+
+
+        <!-- ==============================
+             MÀN HÌNH TRẢ LỜI
+        =============================== -->
+
+        <div
+            id="answerScreen"
+            hidden
+        >
+
+            <h1 id="answerRoundTitle">
+                ĐANG THI
+            </h1>
+
+            <div id="questionNumber">
+                CÂU 1 / 4
+            </div>
+
+            <div
+                id="questionText"
+                class="question-text"
+            >
+            </div>
+
+            <div id="timer">
+                20
+            </div>
+
+            <input
+                id="answerInput"
+                type="text"
+                placeholder="Nhập đáp án..."
+                autocomplete="off"
+            >
+
+            <button id="submitAnswerButton">
+                GỬI ĐÁP ÁN
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <script src="answer.js"></script>
+
+</body>
+
+</html>

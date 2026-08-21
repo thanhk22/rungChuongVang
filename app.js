@@ -66,6 +66,10 @@ let finishStarUsedByTeam = [
 let startQuestions = []; // danh sách câu hỏi
 let teams = ['Đội 1', 'Đội 2', 'Đội 3', 'Đội 4'];
 let scores = createEmptyScores();
+let startPlayedTeams = [
+  [],
+  []
+];
 let activeTeam = 0; // đội đang trả lời
 let activeBranch = 0; // ngành đang chọn (0: Thiếu, 1: Oanh)
 let pack = null; // gói câu hỏi đang chọn (1: Khởi động, 2: Vượt chướng ngại vật, 3: Tăng tốc, 4: Về đích)
@@ -76,9 +80,1298 @@ let locked = false;
 let timer = null;
 let timeLeft = 15;
 
+// ======================================================
+// KẾT NỐI WEBSOCKET - PHẦN TĂNG TỐC
+// ======================================================
+let mcSocket = null;
+let tangTocActive = false;
+let tangTocCurrentQuestion = null;
+let tangTocCurrentQuestionIndex = 0;
+let tangTocDeadline = 0;
+let tangTocResults = [];
+let tangTocScoredQuestions = new Set();
+
+// ======================================================
+// TRẠNG THÁI PHẦN TĂNG TỐC
+// ======================================================
+let tangTocScreenActive = false; // Màn hình Tăng tốc có đang được mở hay không
+const TANGTOC_TIME = 30;// Thời gian suy nghĩ
+let tangTocStarted = false; // Trạng thái cuộc thi
+let TANGTOC_TOTAL_QUESTIONS = 4; // Tổng số câu
+
+// Trạng thái kết nối của 4 đội
+let tangTocTeamStatus = [
+  {
+    teamId: 0,
+    teamName: 'Đội Xanh',
+    connected: false
+  },
+  {
+    teamId: 1,
+    teamName: 'Đội Trắng',
+    connected: false
+  },
+  {
+    teamId: 2,
+    teamName: 'Đội Đỏ',
+    connected: false
+  },
+  {
+    teamId: 3,
+    teamName: 'Đội Vàng',
+    connected: false
+  }
+];
+
+// ======================================================
+// TRẠNG THÁI VƯỢT CHƯỚNG NGẠI VẬT
+// ======================================================
+let vcnvQuestions = []; // lưu 4 câu hỏi
+let vcnvCurrentQuestion = -1; // câu hỏi hiện tại
+let vcnvRevealedAnswers = []; // những câu đã công bố đáp án, để tính điểm khi trả lời từ khóa
+let vcnvRevealedPieces = []; // những mảnh ghép đã mở
+let vcnvCurrentScreen = 'PACK';
+let vcnvKeyword = '';
+let vcnvImage = '';
+let vcnvKeywordLockedTeams = []; // đội đoán từ khóa sai, dừng cuộc chơi
+let vcnvKeywordRequest = null;
+let vcnvLastResult = null;
+let vcnvWinnerTeam = null;
+let vcnvWinnerKeywordPoints = 0;
+let vcnvFinished = false;
+let vcnvPreviousScreen = 'QUESTION_SELECTION';
+let vcnvWrongKeywordTeam = null;
+let vcnvQuestionResult = {
+    questionIndex: -1,
+    answer: '',
+    results: []
+};
+let vcnvMcTimer = null;
+let vcnvDeadline = 0;
+
+// ======================================================
+// TRẠNG THÁI CỘNG ĐIỂM VCNV
+// ======================================================
+
+// Mỗi phần tử có dạng:
+// "ngành-teamId-questionIndex"
+//
+// Ví dụ:
+// "0-2-1"
+// = Ngành 0, Đội 2, câu 2
+//
+let vcnvScoredQuestions = new Set();
+
+// Đảm bảo điểm từ khóa chỉ được cộng một lần
+let vcnvKeywordScored = false;
+
+// ======================================================
+// KIỂM TRA ĐỘI ĐÃ THI KHỞI ĐỘNG CHƯA
+// ======================================================
+
+function hasStartTeamPlayed(teamIndex) {
+
+  const branchIndex =
+    activeBranch;
+
+  return startPlayedTeams[
+    branchIndex
+  ].includes(teamIndex);
+
+}
+
+// ======================================================
+// ĐÁNH DẤU ĐỘI ĐÃ HOÀN THÀNH KHỞI ĐỘNG
+// ======================================================
+
+function markStartTeamPlayed(teamIndex) {
+
+  const branchIndex =
+    activeBranch;
+
+  if (
+    !startPlayedTeams[branchIndex].includes(
+      teamIndex
+    )
+  ) {
+
+    startPlayedTeams[branchIndex].push(
+      teamIndex
+    );
+
+  }
+
+}
+
+function getWebSocketUrl() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${location.host}/ws`;
+}
+
+// ======================================================
+// KẾT NỐI MÁY MC VỚI SERVER
+// ======================================================
+
+function connectMCWebSocket() {
+
+  // Phải mở chương trình bằng HTTP.
+  // Ví dụ:
+  // http://localhost:3000
+
+  if (
+    location.protocol !== 'http:' &&
+    location.protocol !== 'https:'
+  ) {
+
+    console.warn(
+      'Chương trình chưa được mở qua HTTP.'
+    );
+
+    return;
+
+  }
+
+
+  const protocol =
+    location.protocol === 'https:'
+      ? 'wss:'
+      : 'ws:';
+
+
+  mcSocket = new WebSocket(
+    `${protocol}//${location.host}`
+  );
+
+
+  // ------------------------------------------
+  // KẾT NỐI THÀNH CÔNG
+  // ------------------------------------------
+
+  mcSocket.addEventListener(
+    'open',
+    () => {
+
+      console.log(
+        'MC đã kết nối WebSocket.'
+      );
+
+
+      mcSocket.send(
+        JSON.stringify({
+
+          type:
+            'REGISTER_HOST'
+
+        })
+      );
+
+
+      // Gửi tên đội hiện tại
+      sendTeamNamesToServer();
+
+    }
+  );
+
+
+  // ------------------------------------------
+  // NHẬN DỮ LIỆU
+  // ------------------------------------------
+
+  mcSocket.addEventListener(
+    'message',
+    (event) => {
+
+      let data;
+
+
+      try {
+
+        data =
+          JSON.parse(
+            event.data
+          );
+
+      } catch (error) {
+
+        console.error(
+          'Dữ liệu WebSocket không hợp lệ:',
+          event.data
+        );
+
+        return;
+
+      }
+
+      // ========================================
+      // SERVER GỬI DANH SÁCH TÊN ĐỘI
+      // ========================================
+
+      if (
+        data.type ===
+        'TEAM_LIST'
+      ) {
+
+        console.log(
+          'Danh sách đội từ server:',
+          data.teams
+        );
+
+
+        return;
+
+      }
+
+
+      // ========================================
+      // SERVER GỬI TRẠNG THÁI 4 ĐỘI
+      // ========================================
+
+      if (
+        data.type ===
+        'TEAM_STATUS'
+      ) {
+
+        tangTocTeamStatus =
+          data.teams;
+
+
+        console.log(
+          'Trạng thái đội:',
+          tangTocTeamStatus
+        );
+
+
+        // Nếu đang ở màn hình Tăng tốc
+        // thì cập nhật giao diện.
+        if (
+          typeof tangTocScreenActive !==
+          'undefined' &&
+          tangTocScreenActive
+        ) {
+
+          showTangTocScreen();
+
+        }
+
+        return;
+
+      }
+
+      // ======================================================
+      // VCNV - NHẬN DỮ LIỆU CÂU HỎI TỪ SERVER
+      // ======================================================
+
+      if (
+          data.type ===
+          'VCNV_DATA'
+      ) {
+
+          console.log(
+              'MC nhận dữ liệu VCNV từ server:',
+              data
+          );
+
+          vcnvQuestions =
+              Array.isArray(data.questions)
+                  ? data.questions
+                  : [];
+
+          // Hình ảnh dùng chung cho bộ VCNV
+          vcnvImage = data.image || '';
+
+          // Từ khóa lấy trực tiếp từ CSV
+          vcnvKeyword = vcnvQuestions[0]?.key || '';
+
+          if (
+              vcnvQuestions.length < 4
+          ) {
+
+              console.error(
+                  'VCNV: Server trả về chưa đủ 4 câu.'
+              );
+
+              return;
+
+          }
+
+          // Chỉ render sau khi đã nhận dữ liệu thật
+          showVCNVQuestionSelection();
+
+          return;
+
+      }
+
+      // ========================================
+      // VCNV - BẮT ĐẦU TIMER
+      // ========================================
+
+      if (
+          data.type === 'VCNV_STARTED'
+      ) {
+
+          console.log(
+              'VCNV bắt đầu timer:',
+              data
+          );
+
+          vcnvDeadline =
+              data.deadline;
+
+          startVCNVMcTimer(
+              data.deadline
+          );
+
+          return;
+
+      }
+
+      // ========================================
+      // TĂNG TỐC - SERVER GỬI CÂU HỎI
+      // ========================================
+
+      if (
+        data.type === 'TANGTOC_QUESTION'
+      ) {
+
+        const question = data.question;
+
+        const imageHtml =
+          question.image
+            ? `
+              <div class="tangtoc-image-wrap">
+                <img
+                  class="tangtoc-image"
+                  src="${question.image}"
+                  alt="Hình ảnh câu hỏi"
+                >
+              </div>
+            `
+            : '';
+        
+        const html = `
+          <div class="tangtoc-question">
+
+            <div class="tangtoc-header">
+
+              <div class="tangtoc-title">
+                🟡 TĂNG TỐC
+              </div>
+
+              <div class="tangtoc-progress">
+                CÂU ${data.questionIndex + 1}/${data.totalQuestions}
+              </div>
+
+              <div
+                id="tangtoc-timer"
+                class="tangtoc-timer"
+              >
+                ${TANGTOC_TIME}s
+              </div>
+
+            </div>
+
+
+            ${imageHtml}
+
+          </div>
+        `;
+
+        const app =
+          document.getElementById('app');
+        
+        if (app) {
+          app.innerHTML = html;
+        }
+
+        return;
+      }
+
+
+      // ========================================
+      // TĂNG TỐC - BẮT ĐẦU TIMER
+      // ========================================
+
+      if (
+        data.type === 'TANGTOC_STARTED'
+      ) {
+
+        tangTocDeadline =
+          data.deadline;
+
+        startTangTocMcTimer(
+          data.timeLimit
+        );
+
+        return;
+      }
+
+
+      // ========================================
+      // TĂNG TỐC - KẾT QUẢ CÂU
+      // ========================================
+
+      if (
+        data.type === 'TANGTOC_RESULT'
+      ) {
+
+        tangTocResults =
+          data.results || [];
+        
+        // cộng điểm tăng tốc vào đội
+        applyTangTocScores(
+          data.results || [],
+          data.questionIndex
+        );
+
+        showTangTocResult(data);
+
+        return;
+      }
+
+
+      // ========================================
+      // TĂNG TỐC - KẾT THÚC
+      // ========================================
+
+      if (
+        data.type === 'TANGTOC_FINISHED'
+      ) {
+
+        tangTocStarted = false;
+        tangTocActive = false;
+
+        clearInterval(timer);
+
+        tangTocCurrentQuestion = null;
+        tangTocResults = [];
+
+        showPacks();
+
+        return;
+      }
+
+
+      // ========================================
+      // TĂNG TỐC - LỖI
+      // ========================================
+
+      if (
+        data.type === 'TANGTOC_ERROR'
+      ) {
+
+        alert(
+          data.message ||
+          'Có lỗi trong phần Tăng tốc.'
+        );
+
+        return;
+      }
+
+      // ======================================================
+      // VCNV - NHẬN KẾT QUẢ ĐÃ CHỐT
+      // ======================================================
+
+      if (
+          data.type ===
+          'VCNV_RESULT'
+      ) {
+
+          console.log(
+              'MC nhận kết quả VCNV:',
+              data
+          );
+
+          // Lưu kết quả
+          vcnvQuestionResult = {
+
+              questionIndex:
+                  data.questionIndex,
+
+              answer:
+                  data.correctAnswer,
+
+              results:
+                  Array.isArray(data.results)
+                      ? data.results
+                      : []
+
+          };
+
+          // ------------------------------------------
+          // CỘNG ĐIỂM CÂU VCNV
+          // ------------------------------------------
+
+          applyVCNVQuestionScores(
+              vcnvQuestionResult.results,
+              data.questionIndex
+          );
+
+          // ------------------------------------------
+          // ĐÁNH DẤU CÂU ĐÃ CÔNG BỐ ĐÁP ÁN
+          // ------------------------------------------
+
+          if (
+              !vcnvRevealedAnswers.includes(
+                  data.questionIndex
+              )
+          ) {
+
+              vcnvRevealedAnswers.push(
+                  data.questionIndex
+              );
+
+          }
+
+          clearInterval(
+              vcnvMcTimer
+          );
+
+          vcnvMcTimer =
+              null;
+
+          vcnvCurrentQuestion =
+              data.questionIndex;
+
+          // Chuyển sang màn hình kết quả
+          vcnvCurrentScreen =
+              'RESULT';
+
+          renderVCNV();
+
+          return;
+
+      }
+
+    }
+  );
+
+
+  // ------------------------------------------
+  // NGẮT KẾT NỐI
+  // ------------------------------------------
+
+  mcSocket.addEventListener(
+    'close',
+    () => {
+
+      console.warn(
+        'MC đã mất kết nối WebSocket.'
+      );
+
+    }
+  );
+
+
+  // ------------------------------------------
+  // LỖI
+  // ------------------------------------------
+
+  mcSocket.addEventListener(
+    'error',
+    (error) => {
+
+      console.error(
+        'Lỗi WebSocket:',
+        error
+      );
+
+    }
+  );
+
+}
+
+// ======================================================
+// CỘNG ĐIỂM TĂNG TỐC
+// ======================================================
+
+function applyTangTocScores(
+  results,
+  questionIndex
+) {
+
+  // Không có kết quả
+  if (!Array.isArray(results)) {
+    return;
+  }
+
+  // --------------------------------------------------
+  // Chống cộng điểm trùng
+  // --------------------------------------------------
+
+  const scoreKey =
+    `${activeBranch}-${questionIndex}`;
+
+  if (
+    tangTocScoredQuestions.has(scoreKey)
+  ) {
+
+    console.warn(
+      'Câu Tăng tốc này đã được cộng điểm:',
+      scoreKey
+    );
+
+    return;
+
+  }
+
+  // --------------------------------------------------
+  // Cộng điểm cho từng đội
+  // --------------------------------------------------
+
+  results.forEach(
+    (result) => {
+
+      const teamId =
+        Number(result.teamId);
+
+      const points =
+        Number(result.points) || 0;
+
+      // Kiểm tra teamId
+      if (
+        !Number.isInteger(teamId) ||
+        teamId < 0 ||
+        teamId >= teams.length
+      ) {
+        return;
+      }
+
+      // Không có điểm thì không làm gì
+      if (
+        points === 0
+      ) {
+        return;
+      }
+
+      // Cộng vào ngành đang thi
+      scores[teamId][activeBranch] +=
+        points;
+
+    }
+  );
+
+  // Đánh dấu câu này đã cộng điểm
+  tangTocScoredQuestions.add(
+    scoreKey
+  );
+
+  // Cập nhật bảng điểm
+  refreshScoreboard();
+
+  console.log(
+    'Đã cộng điểm Tăng tốc:',
+    results,
+    'Ngành:',
+    getActiveBranchLabel(),
+    'Câu:',
+    questionIndex + 1
+  );
+
+}
+
+// ======================================================
+// CỘNG ĐIỂM VƯỢT CHƯỚNG NGẠI VẬT - CÂU HỎI
+// ======================================================
+
+function applyVCNVQuestionScores(
+    results,
+    questionIndex
+) {
+
+    if (
+        !Array.isArray(results)
+    ) {
+
+        return;
+
+    }
+
+
+    results.forEach(
+        result => {
+
+            const teamId =
+                Number(
+                    result.teamId
+                );
+
+
+            // ------------------------------------------
+            // Kiểm tra teamId
+            // ------------------------------------------
+
+            if (
+                !Number.isInteger(teamId) ||
+                teamId < 0 ||
+                teamId >= teams.length
+            ) {
+
+                return;
+
+            }
+
+
+            // ------------------------------------------
+            // Chỉ đội trả lời đúng mới được +10
+            // ------------------------------------------
+
+            if (
+                result.correct !== true
+            ) {
+
+                return;
+
+            }
+
+
+            // ------------------------------------------
+            // Chống cộng trùng
+            // ------------------------------------------
+
+            const scoreKey =
+                `${activeBranch}-${teamId}-${questionIndex}`;
+
+
+            if (
+                vcnvScoredQuestions.has(
+                    scoreKey
+                )
+            ) {
+
+                console.warn(
+                    'VCNV: điểm câu này đã được cộng:',
+                    scoreKey
+                );
+
+                return;
+
+            }
+
+
+            // ------------------------------------------
+            // CỘNG +10
+            // ------------------------------------------
+
+            scores[teamId][activeBranch] +=
+                10;
+
+
+            // Đánh dấu đã cộng
+            vcnvScoredQuestions.add(
+                scoreKey
+            );
+
+
+            console.log(
+                `VCNV: ${teams[teamId]} +10 điểm`,
+                {
+                    branch:
+                        getActiveBranchLabel(),
+
+                    question:
+                        questionIndex + 1
+                }
+            );
+
+        }
+    );
+
+
+    // ------------------------------------------
+    // Cập nhật bảng điểm
+    // ------------------------------------------
+
+    refreshScoreboard();
+
+}
+
+function showTangTocResult(message) {
+
+  clearInterval(timer);
+
+
+  const results =
+    message.results || [];
+
+
+  // ==================================================
+  // LUÔN HIỂN THỊ ĐỦ 4 ĐỘI
+  // ==================================================
+
+  const teamResults = [];
+
+
+  for (
+    let teamId = 0;
+    teamId < 4;
+    teamId++
+  ) {
+
+    const result =
+      results.find(
+        item =>
+          Number(item.teamId) === teamId
+      );
+
+
+    if (result) {
+
+      teamResults.push(result);
+
+    } else {
+
+      teamResults.push({
+
+        teamId,
+
+        team:
+          teams[teamId] ||
+          `Đội ${teamId + 1}`,
+
+        answer: '',
+
+        correct: false,
+
+        elapsedMs: null,
+
+        points: 0
+
+      });
+
+    }
+
+  }
+
+
+  // ==================================================
+  // XẾP THỨ TỰ HIỂN THỊ
+  //
+  // Đúng + có điểm:
+  // 40 → 30 → 20 → 10
+  //
+  // Sai / không trả lời:
+  // xuống dưới
+  // ==================================================
+
+  teamResults.sort(
+    (a, b) => {
+
+      const aPoints =
+        Number(a.points) || 0;
+
+      const bPoints =
+        Number(b.points) || 0;
+
+
+      if (
+        aPoints !==
+        bPoints
+      ) {
+
+        return bPoints - aPoints;
+
+      }
+
+
+      // Nếu cùng điểm và đều đúng
+      // thì đội nhanh hơn đứng trước.
+
+      if (
+        a.correct &&
+        b.correct &&
+        a.elapsedMs != null &&
+        b.elapsedMs != null
+      ) {
+
+        return (
+          a.elapsedMs -
+          b.elapsedMs
+        );
+
+      }
+
+
+      return (
+        Number(a.teamId) -
+        Number(b.teamId)
+      );
+
+    }
+  );
+
+
+  // ==================================================
+  // TẠO CÁC DÒNG BẢNG
+  // ==================================================
+
+  const rows =
+    teamResults.map(
+      (
+        result,
+        index
+      ) => {
+
+        const elapsed =
+          result.elapsedMs == null
+            ? '—'
+            : `${(
+                Number(
+                  result.elapsedMs
+                ) / 1000
+              ).toFixed(2)}s`;
+
+
+        let rankIcon = '';
+
+
+        if (
+          result.correct &&
+          Number(result.points) > 0
+        ) {
+
+          const rank =
+            Number(result.points);
+
+
+          if (rank === 40) {
+            rankIcon = '🥇';
+          }
+          else if (rank === 30) {
+            rankIcon = '🥈';
+          }
+          else if (rank === 20) {
+            rankIcon = '🥉';
+          }
+          else if (rank === 10) {
+            rankIcon = '4️⃣';
+          }
+
+        }
+        else {
+
+          rankIcon = '❌';
+
+        }
+
+
+        return `
+          <tr>
+
+            <td class="tangtoc-rank">
+              ${rankIcon}
+            </td>
+
+            <td>
+              <b>
+                ${escapeHtml(
+                  result.team ||
+                  `Đội ${Number(result.teamId) + 1}`
+                )}
+              </b>
+            </td>
+
+            <td>
+              ${
+                result.answer
+                  ? escapeHtml(
+                      result.answer
+                    )
+                  : '—'
+              }
+            </td>
+
+            <td>
+              ${
+                result.correct
+                  ? '<span class="tangtoc-correct">✅ ĐÚNG</span>'
+                  : '<span class="tangtoc-wrong">❌ SAI</span>'
+              }
+            </td>
+
+            <td>
+              ${elapsed}
+            </td>
+
+            <td>
+              <b>
+                ${
+                  Number(result.points) > 0
+                    ? `+${Number(result.points)}`
+                    : '0'
+                }
+              </b>
+            </td>
+
+          </tr>
+        `;
+
+      }
+    ).join('');
+
+
+  // ==================================================
+  // CÂU CUỐI?
+  // ==================================================
+
+  const isLast =
+    (
+      Number(
+        message.questionIndex
+      ) || 0
+    ) >=
+    (
+      Number(
+        message.totalQuestions
+      ) || 4
+    ) - 1;
+
+
+  // ==================================================
+  // HIỂN THỊ
+  // ==================================================
+
+  render(
+    gameLayout(`
+
+      <div class="top">
+
+        <div>
+
+          <h1>
+            🟡 TĂNG TỐC
+          </h1>
+
+          <div class="sub">
+            KẾT QUẢ CÂU
+            ${
+              (
+                Number(
+                  message.questionIndex
+                ) || 0
+              ) + 1
+            }/
+            ${
+              Number(
+                message.totalQuestions
+              ) || 4
+            }
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <div class="tangtoc-result-answer">
+
+        ĐÁP ÁN ĐÚNG:
+
+        <b>
+          ${
+            escapeHtml(
+              message.correctAnswer ||
+              '—'
+            )
+          }
+        </b>
+
+      </div>
+
+
+      <div class="tangtoc-result-table-wrap">
+
+        <table class="tangtoc-result-table">
+
+          <thead>
+
+            <tr>
+
+              <th></th>
+
+              <th>ĐỘI</th>
+
+              <th>ĐÁP ÁN</th>
+
+              <th>KẾT QUẢ</th>
+
+              <th>THỜI GIAN</th>
+
+              <th>ĐIỂM</th>
+
+            </tr>
+
+          </thead>
+
+
+          <tbody>
+
+            ${rows}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+
+      <div class="tangtoc-result-note">
+
+        Đội đúng và nhanh nhất:
+        <b>+40 điểm</b>
+
+        ·
+
+        tiếp theo:
+        <b>+30</b>,
+
+        <b>+20</b>,
+
+        <b>+10</b>.
+
+        Đội sai hoặc không trả lời:
+        <b>0 điểm</b>.
+
+      </div>
+
+
+      <div class="tangtoc-result-actions">
+
+        <button
+          class="next"
+          onclick="nextTangTocQuestion()"
+        >
+
+          ${
+            isLast
+              ? 'KẾT THÚC TĂNG TỐC'
+              : 'CÂU TIẾP THEO →'
+          }
+
+        </button>
+
+      </div>
+
+    `)
+  );
+
+}
+
+// ======================================================
+// TIMER TĂNG TỐC - MÁY MC
+// ======================================================
+
+function startTangTocMcTimer() {
+
+  clearInterval(timer);
+
+  const timerElement =
+    document.getElementById(
+      'tangtoc-timer'
+    );
+
+  if (!timerElement) {
+
+    console.warn(
+      'Không tìm thấy #tangtoc-timer'
+    );
+
+    return;
+
+  }
+
+
+  const updateTimer = () => {
+
+    const remainingMs =
+      Math.max(
+        0,
+        tangTocDeadline - Date.now()
+      );
+
+
+    const seconds =
+      Math.ceil(
+        remainingMs / 1000
+      );
+
+
+    timerElement.textContent =
+      `${seconds}s`;
+
+
+    if (seconds <= 5) {
+
+      timerElement.classList.add(
+        'danger'
+      );
+
+    } else {
+
+      timerElement.classList.remove(
+        'danger'
+      );
+
+    }
+
+
+    if (remainingMs <= 0) {
+
+      clearInterval(timer);
+
+    }
+
+  };
+
+
+  // Cập nhật ngay lập tức
+  updateTimer();
+
+
+  // Sau đó cập nhật 100ms/lần
+  timer =
+    setInterval(
+      updateTimer,
+      100
+    );
+
+}
+
+// ======================================================
+// GỬI TÊN 4 ĐỘI CHO SERVER
+// ======================================================
+
+function sendTeamNamesToServer() {
+
+  if (
+    !mcSocket ||
+    mcSocket.readyState !== WebSocket.OPEN
+  ) {
+
+    return;
+
+  }
+
+
+  mcSocket.send(
+    JSON.stringify({
+
+      type:
+        'TEAM_LIST',
+
+      teams:
+        teams
+
+    })
+  );
+
+}
+
 document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
+
+  // Kết nối MC với server
+  connectMCWebSocket();
   renderLoading();
 
   try {
@@ -430,9 +1723,18 @@ function saveTeams() {
       `Đội ${i + 1}`
   );
 
+  // Đồng bộ tên đội với server
+  sendTeamNamesToServer();
+
   // Bắt đầu cuộc thi mới
   // nên reset trạng thái Ngôi sao.
   resetFinishStars();
+
+  // Reset trạng thái Khởi động
+  startPlayedTeams = [
+    [],
+    []
+  ];
 
   showPacks();
 }
@@ -610,7 +1912,6 @@ function showPacks() {
       <button
         class="pack"
         onclick="choosePack(2)"
-        ${packCounts[1] === 0 ? 'disabled' : ''}
       >
         🔵 VƯỢT CHƯỚNG NGẠI VẬT
         <small>${packCounts[1]} câu</small>
@@ -619,7 +1920,6 @@ function showPacks() {
       <button
         class="pack"
         onclick="choosePack(3)"
-        ${packCounts[2] === 0 ? 'disabled' : ''}
       >
         🟡 TĂNG TỐC
         <small>${packCounts[2]} câu</small>
@@ -650,6 +1950,23 @@ function choosePack(selectedPack) {
     return;
   }
 
+  // ==========================================
+  // VƯỢT CHƯỚNG NGẠI VẬT
+  // ==========================================
+  if (selectedPack === 2) {
+    startVCNV();
+    return;
+  }
+
+  // --------------------------------------------
+  // GÓI 3: TĂNG TỐC
+  // --------------------------------------------
+
+  if (selectedPack === 3) {
+    showTangTocScreen();
+    return;
+  }
+
   // --------------------------------------------
   // GÓI 4: VỀ ĐÍCH
   // Về đích có luật riêng:
@@ -676,8 +1993,7 @@ function choosePack(selectedPack) {
   }
 
   // --------------------------------------------
-  // GÓI 2 và 3
-  // Giữ nguyên cơ chế cũ.
+  // GÓI khác - giữ cơ chế cũ.
   // --------------------------------------------
   questionSet = null;
 
@@ -2639,42 +3955,370 @@ function useFinishStar() {
 }
 
 function showQuestionSets(selectedPack) {
+
   clearInterval(timer);
-  pack = selectedPack;
-  questionSet = null;
 
-  const currentBranchId = getActiveBranchId();
-  const setNumbers = getSetNumbersForPack(selectedPack, currentBranchId);
+  pack =
+    selectedPack;
 
-  render(gameLayout(`
-    <div class="top">
-      <div><h1>🟢 ${getPackLabel(selectedPack)}</h1><div class="sub">${getActiveBranchLabel()} · chọn 1 trong ${setNumbers.length} bộ câu hỏi</div></div>
-    </div>
-    ${selectionControls()}
-    <div class="grid set-grid">
-      ${setNumbers.map((setNumber) => {
-        const questionCount = startQuestions.filter((question) => question.pack === selectedPack && question.branch === currentBranchId && question.set === setNumber).length;
-        return `<button class="pack" onclick="chooseQuestionSet(${setNumber})">BỘ ${setNumber}<small>${questionCount} câu</small></button>`;
-      }).join('')}
-    </div>
-    <p class="note">Mỗi bộ Khởi động gồm 10 câu. Hệ thống chỉ hiển thị các bộ thuộc ngành đang chọn.</p>
-  `));
+  questionSet =
+    null;
+
+
+  const currentBranchId =
+    getActiveBranchId();
+
+
+  const setNumbers =
+    getSetNumbersForPack(
+      selectedPack,
+      currentBranchId
+    );
+
+
+  const playedTeams =
+    startPlayedTeams[
+      activeBranch
+    ];
+
+
+  const allTeamsPlayed =
+    playedTeams.length >= teams.length;
+
+
+  // ==================================================
+  // NÚT CHỌN ĐỘI
+  // ==================================================
+
+  const teamButtons =
+    teams
+      .map(
+        (
+          team,
+          teamIndex
+        ) => {
+
+          const played =
+            playedTeams.includes(
+              teamIndex
+            );
+
+
+          const selected =
+            activeTeam === teamIndex;
+
+
+          return `
+            <button
+              class="team-option ${
+                selected
+                  ? 'active'
+                  : ''
+              }"
+              onclick="selectStartTeam(${teamIndex})"
+              ${
+                played
+                  ? 'disabled'
+                  : ''
+              }
+            >
+
+              ${escapeHtml(team)}
+
+              <small>
+                ${
+                  played
+                    ? 'ĐÃ THI'
+                    : 'CHỌN ĐỘI'
+                }
+              </small>
+
+            </button>
+          `;
+
+        }
+      )
+      .join('');
+
+
+  // ==================================================
+  // NÚT CHỌN BỘ
+  // ==================================================
+
+  const setButtons =
+    setNumbers
+      .map(
+        (setNumber) => {
+
+          return `
+            <button
+              class="pack"
+              onclick="chooseQuestionSet(${setNumber})"
+              ${
+                hasStartTeamPlayed(
+                  activeTeam
+                )
+                  ? 'disabled'
+                  : ''
+              }
+            >
+
+              BỘ ${setNumber}
+
+              <small>
+                ${
+                  startQuestions.filter(
+                    (question) =>
+                      question.pack ===
+                        selectedPack &&
+                      question.branch ===
+                        currentBranchId &&
+                      question.set ===
+                        setNumber
+                  ).length
+                } câu
+              </small>
+
+            </button>
+          `;
+
+        }
+      )
+      .join('');
+
+
+  // ==================================================
+  // HIỂN THỊ
+  // ==================================================
+
+  render(
+    gameLayout(`
+
+      <div class="top">
+
+        <div>
+
+          <h1>
+            🟢 KHỞI ĐỘNG
+          </h1>
+
+          <div class="sub">
+            ${getActiveBranchLabel()}
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <div class="card">
+
+        <h2>
+          CHỌN ĐỘI THI
+        </h2>
+
+        <div class="team-options">
+
+          ${teamButtons}
+
+        </div>
+
+
+        <div
+          style="
+            margin-top: 25px;
+          "
+        >
+
+          <h2>
+            CHỌN BỘ CÂU HỎI
+          </h2>
+
+          <div class="grid set-grid">
+
+            ${setButtons}
+
+          </div>
+
+        </div>
+
+
+        <div
+          style="
+            margin-top: 25px;
+            display: flex;
+            justify-content: center;
+          "
+        >
+
+          <button
+            class="next"
+            onclick="endKickoff()"
+            ${
+              allTeamsPlayed
+                ? ''
+                : 'disabled'
+            }
+          >
+
+            ✅ KẾT THÚC KHỞI ĐỘNG
+
+          </button>
+
+        </div>
+
+
+        <p class="note">
+
+          ${
+            allTeamsPlayed
+
+              ? 'Đã đủ 4 đội hoàn thành Khởi động. Có thể kết thúc phần thi.'
+
+              : `Đã có ${playedTeams.length}/4 đội hoàn thành Khởi động.`
+
+          }
+
+        </p>
+
+
+      </div>
+
+    `)
+  );
+
+}
+
+// ======================================================
+// KẾT THÚC PHẦN KHỞI ĐỘNG
+// ======================================================
+
+function endKickoff() {
+
+  const playedTeams =
+    startPlayedTeams[
+      activeBranch
+    ];
+
+
+  // Chưa đủ 4 đội
+  if (
+    playedTeams.length <
+    teams.length
+  ) {
+
+    alert(
+      `Chưa thể kết thúc Khởi động.\n\n` +
+      `Mới có ${playedTeams.length}/4 đội hoàn thành.`
+    );
+
+    return;
+
+  }
+
+
+  // Dừng timer
+  clearInterval(timer);
+
+
+  // Quay về màn hình chọn 4 phần thi
+  showPacks();
+
+}
+
+// ======================================================
+// CHỌN ĐỘI THI KHỞI ĐỘNG
+// ======================================================
+
+function selectStartTeam(teamIndex) {
+
+  // Kiểm tra đội hợp lệ
+  if (
+    teamIndex < 0 ||
+    teamIndex >= teams.length
+  ) {
+
+    return;
+
+  }
+
+
+  // Đội đã thi rồi thì không cho chọn
+  if (
+    hasStartTeamPlayed(teamIndex)
+  ) {
+
+    return;
+
+  }
+
+
+  activeTeam =
+    teamIndex;
+
+
+  // Hiển thị lại màn hình chọn bộ
+  showQuestionSets(1);
+
 }
 
 function chooseQuestionSet(selectedSet) {
-  questionSet = selectedSet;
-  pool = startQuestions.filter((question) => question.pack === pack && question.branch === getActiveBranchId() && question.set === selectedSet);
-  idx = 0;
+
+  // Không cho đội đã thi chọn lại
+  if (
+    hasStartTeamPlayed(activeTeam)
+  ) {
+
+    alert(
+      `${teams[activeTeam]} đã hoàn thành phần Khởi động.`
+    );
+
+    return;
+
+  }
+
+
+  questionSet =
+    selectedSet;
+
+
+  pool =
+    startQuestions.filter(
+      (question) =>
+        question.pack === pack &&
+        question.branch ===
+          getActiveBranchId() &&
+        question.set ===
+          selectedSet
+    );
+
+
+  idx =
+    0;
+
+
   showQuestion();
+
 }
 
 function showQuestion() {
+  
+  // Đã hoàn thành phần thi Khởi động
   if (idx >= pool.length) {
-    if (pack === 1) {
-      showQuestionSets(pack);
-    } else {
-      showPacks();
+
+    clearInterval(timer);
+
+    // Khởi động hoàn thành, quay trở về màn hình chính
+    if (pack === 1){
+      markStartTeamPlayed(
+        activeTeam
+      );
+
+      showQuestionSets(1);
+      return;
     }
+
+    showPacks();
 
     return;
   }
@@ -2863,4 +4507,1807 @@ function calculateFinishStealScore(
     basePoints *
     FINISH_STEAL_PENALTY
   );
+}
+
+// ======================================================
+// MÀN HÌNH TĂNG TỐC - MÁY MC
+// ======================================================
+
+function showTangTocScreen() {
+
+  clearInterval(timer);
+
+  tangTocScreenActive = true;
+
+
+  // ------------------------------------------
+  // Đếm số đội đã kết nối
+  // ------------------------------------------
+
+  const connectedCount =
+    tangTocTeamStatus.filter(
+      (team) =>
+        team.connected
+    ).length;
+
+
+  // ------------------------------------------
+  // Danh sách 4 đội
+  // ------------------------------------------
+
+  const teamStatusHtml =
+    tangTocTeamStatus
+      .map((team) => {
+
+        const statusText =
+          team.connected
+            ? '🟢 ĐÃ KẾT NỐI'
+            : '🔴 CHƯA KẾT NỐI';
+
+
+        return `
+          <div class="tangtoc-team-status">
+
+            <div class="tangtoc-team-name">
+              ${escapeHtml(team.teamName)}
+            </div>
+
+            <div class="tangtoc-team-connection">
+              ${statusText}
+            </div>
+
+          </div>
+        `;
+
+      })
+      .join('');
+
+
+  render(
+    gameLayout(`
+
+      <div class="top">
+
+        <div>
+
+          <h1>
+            🟡 TĂNG TỐC
+          </h1>
+
+          <div class="sub">
+            ${getActiveBranchLabel()}
+          </div>
+
+        </div>
+
+      </div>
+
+
+      ${selectionControls()}
+
+
+      <div class="card">
+
+        <h2>
+          PHẦN THI TĂNG TỐC
+        </h2>
+
+
+        <p class="note">
+
+          Gồm ${TANGTOC_TOTAL_QUESTIONS}
+          câu hỏi Đuổi hình bắt chữ.
+
+          <br>
+
+          Mỗi câu có
+          <b>${TANGTOC_TIME} giây</b>
+          để suy nghĩ và gửi đáp án.
+
+          <br>
+
+          Đội trả lời đúng nhanh nhất:
+          <b>+40 điểm</b>.
+
+          Sau đó lần lượt:
+          <b>+30, +20, +10</b>.
+
+          <br>
+
+          Trả lời sai:
+          <b>0 điểm</b>.
+
+        </p>
+
+
+        <div class="tangtoc-connection-summary">
+
+          Đã kết nối:
+          <b>
+            ${connectedCount}/4
+          </b>
+
+        </div>
+
+
+        <div class="tangtoc-team-list">
+
+          ${teamStatusHtml}
+
+        </div>
+
+
+        <div class="tangtoc-actions">
+
+          <button
+            class="tangtoc-start-button"
+            onclick="startTangToc()"
+            ${connectedCount < 4 ? 'disabled' : ''}
+          >
+
+            ▶ BẮT ĐẦU TĂNG TỐC
+
+          </button>
+
+
+          <button
+            class="secondary-button"
+            onclick="showPacks()"
+          >
+
+            ← QUAY LẠI
+
+          </button>
+
+        </div>
+
+
+        ${
+          connectedCount < 4
+            ? `
+              <p class="note warning">
+
+                Cần đủ 4 đội kết nối
+                trước khi bắt đầu.
+
+              </p>
+            `
+            : `
+              <p class="note success">
+
+                Đã đủ 4 đội.
+                Có thể bắt đầu phần thi.
+
+              </p>
+            `
+        }
+
+      </div>
+
+    `)
+  );
+
+}
+
+// ======================================================
+// BẮT ĐẦU TĂNG TỐC
+// ======================================================
+
+function startTangToc() {
+
+  if (
+    !mcSocket ||
+    mcSocket.readyState !== WebSocket.OPEN
+  ) {
+
+    alert(
+      'Chưa kết nối được với server.'
+    );
+
+    return;
+
+  }
+
+
+  const connectedCount =
+    tangTocTeamStatus.filter(
+      (team) =>
+        team.connected
+    ).length;
+
+
+  if (
+    connectedCount < 4
+  ) {
+
+    alert(
+      'Chưa đủ 4 đội kết nối.'
+    );
+
+    return;
+
+  }
+
+
+  tangTocStarted = true;
+
+
+  // Gửi lệnh cho server
+  mcSocket.send(
+    JSON.stringify({
+
+      type: 'START_TANGTOC',
+
+      branch: getActiveBranchId(),
+
+      totalQuestions: TANGTOC_TOTAL_QUESTIONS,
+
+      timeLimit: TANGTOC_TIME
+
+    })
+  );
+
+  console.log(
+    'MC đã gửi lệnh bắt đầu Tăng tốc.'
+  );
+
+}
+
+function nextTangTocQuestion() {
+
+  if (
+    !mcSocket ||
+    mcSocket.readyState !== WebSocket.OPEN
+  ) {
+
+    alert(
+      'Chưa kết nối được với server.'
+    );
+
+    return;
+  }
+
+  mcSocket.send(
+    JSON.stringify({
+
+      type:
+        'NEXT_TANGTOC_QUESTION'
+
+    })
+  );
+
+}
+
+// ======================================================
+// KHỞI TẠO VCNV
+// ======================================================
+
+function startVCNV() {
+
+    vcnvQuestions = [];
+
+    vcnvCurrentQuestion = -1;
+
+    vcnvRevealedAnswers = [];
+
+    vcnvRevealedPieces = [];
+
+    vcnvKeywordLockedTeams = [];
+
+    vcnvKeywordRequest = null;
+
+    vcnvLastResult = null;
+
+    vcnvWinnerTeam = null;
+
+    vcnvScoredQuestions.clear();
+
+    vcnvKeywordScored = false;
+
+    vcnvWinnerKeywordPoints = 0;
+
+    vcnvFinished = false;
+
+    vcnvKeyword = '';
+
+    vcnvImage = '';
+    
+    startVCNVServer();
+
+    // showVCNVQuestionSelection();
+
+}
+
+function startVCNVServer() {
+
+    if (
+        !mcSocket ||
+        mcSocket.readyState !== WebSocket.OPEN
+    ) {
+
+        console.error(
+            'MC chưa kết nối server.'
+        );
+
+        return;
+
+    }
+
+
+    mcSocket.send(
+        JSON.stringify({
+
+            type:
+                'START_VCNV',
+
+            branch:
+                getActiveBranchId()
+
+        })
+    );
+
+
+    console.log(
+        'MC đã gửi START_VCNV'
+    );
+
+}
+
+// ======================================================
+// MÀN HÌNH CHỌN CÂU HỎI
+// ======================================================
+
+function showVCNVQuestionSelection() {
+
+    vcnvCurrentScreen =
+        'QUESTION_SELECTION';
+
+    renderVCNV();
+
+}
+
+
+// ======================================================
+// MÀN HÌNH CÂU HỎI
+// ======================================================
+
+function showVCNVQuestion(questionIndex) {
+
+    if (
+        questionIndex < 0 ||
+        questionIndex >= vcnvQuestions.length
+    ) {
+        return;
+    }
+
+    vcnvCurrentQuestion =
+        questionIndex;
+
+    vcnvCurrentScreen =
+        'QUESTION';
+
+    vcnvQuestionResult = {
+        questionIndex: questionIndex,
+        answer: vcnvQuestions[questionIndex].answer,
+        results: []
+    };
+
+    renderVCNV();
+
+    if (
+        mcSocket &&
+        mcSocket.readyState === WebSocket.OPEN
+    ) {
+
+        mcSocket.send(
+            JSON.stringify({
+
+                type:
+                    'VCNV_SHOW_QUESTION',
+
+                questionIndex:
+                    questionIndex
+
+            })
+        );
+
+    }
+
+}
+
+function showVCNVQuestionResult() {
+  
+    vcnvCurrentScreen = 'RESULT';
+
+    renderVCNV();
+
+}
+
+// ======================================================
+// CÔNG BỐ ĐÁP ÁN
+// ======================================================
+
+function revealVCNVAnswer() {
+
+    if (
+        vcnvCurrentQuestion < 0
+    ) {
+        return;
+    }
+
+    if (
+        !vcnvRevealedAnswers.includes(
+            vcnvCurrentQuestion
+        )
+    ) {
+
+        vcnvRevealedAnswers.push(
+            vcnvCurrentQuestion
+        );
+
+    }
+
+    showVCNVResult();
+
+}
+
+
+// ======================================================
+// MÀN HÌNH KẾT QUẢ
+// ======================================================
+
+function showVCNVResult() {
+
+    vcnvCurrentScreen =
+        'RESULT';
+
+    renderVCNV();
+
+}
+
+
+// ======================================================
+// MÀN HÌNH MẢNH GHÉP
+// ======================================================
+
+function showVCNVPiece() {
+
+    vcnvCurrentScreen =
+        'PIECE';
+
+    renderVCNV();
+
+    setTimeout(
+        () => {
+
+            if (
+                vcnvCurrentQuestion >= 0 &&
+                !vcnvRevealedPieces.includes(
+                    vcnvCurrentQuestion
+                )
+            ) {
+
+                vcnvRevealedPieces.push(
+                    vcnvCurrentQuestion
+                );
+
+            }
+
+            renderVCNV();
+
+        },
+        2000
+    );
+
+}
+
+
+// ======================================================
+// QUAY LẠI CHỌN CÂU
+// ======================================================
+
+function continueVCNV() {
+
+    vcnvCurrentQuestion =
+        -1;
+
+    vcnvCurrentScreen =
+        'QUESTION_SELECTION';
+
+    renderVCNV();
+
+}
+
+
+// ======================================================
+// MỞ MÀN HÌNH TRẢ LỜI TỪ KHÓA
+// ======================================================
+
+function showVCNVKeywordScreen() {
+
+  vcnvPreviousScreen = vcnvCurrentScreen;
+
+  vcnvCurrentScreen = 'KEYWORD';
+
+  renderVCNV();
+
+}
+
+
+// ======================================================
+// RENDER VCNV
+// ======================================================
+
+function renderVCNV() {
+
+    const app =
+        document.getElementById(
+            'app'
+        );
+
+    if (!app) {
+        return;
+    }
+
+    app.innerHTML =
+        buildVCNVScreen();
+}
+
+
+// ======================================================
+// TẠO GIAO DIỆN VCNV
+// ======================================================
+
+function buildVCNVScreen() {
+
+    let html = '';
+
+    html += `
+        <div class="vcnv-screen">
+
+            <div class="vcnv-header">
+
+                <div class="vcnv-title">
+                    VƯỢT CHƯỚNG NGẠI VẬT
+                </div>
+
+                <button
+                    class="vcnv-keyword-request-button"
+                    id="vcnvKeywordRequestButton"
+                    onclick="showVCNVKeywordScreen()"
+                    hidden
+                >
+                    TRẢ LỜI TỪ KHÓA
+                </button>
+
+            </div>
+    `;
+
+    // ==================================================
+    // MÀN HÌNH 1
+    // ==================================================
+
+    if (
+        vcnvCurrentScreen ===
+        'QUESTION_SELECTION'
+    ) {
+
+        html +=
+            buildVCNVQuestionSelection();
+
+    }
+
+    // ==================================================
+    // MÀN HÌNH 2
+    // ==================================================
+
+    if (
+        vcnvCurrentScreen ===
+        'QUESTION'
+    ) {
+
+        html +=
+            buildVCNVQuestionScreen();
+
+    }
+
+    // ==================================================
+    // MÀN HÌNH 3
+    // ==================================================
+
+    if (
+        vcnvCurrentScreen ===
+        'RESULT'
+    ) {
+
+        html +=
+            buildVCNVResultScreen();
+
+    }
+
+    // ==================================================
+    // MÀN HÌNH 4
+    // ==================================================
+
+    if (
+        vcnvCurrentScreen ===
+        'PIECE'
+    ) {
+
+        html +=
+            buildVCNVPieceScreen();
+
+    }
+
+    // ==================================================
+    // MÀN HÌNH 5
+    // ==================================================
+    if (
+        vcnvCurrentScreen ===
+        'KEYWORD'
+    ) {
+
+        html +=
+            buildVCNVKeywordScreen();
+
+    }
+
+    if (
+        vcnvCurrentScreen ===
+        'FINISHED'
+    ) {
+
+        html +=
+            buildVCNVFinishedScreen();
+
+    }
+
+    if (
+        vcnvCurrentScreen ===
+        'KEYWORD_WRONG'
+    ) {
+
+        html +=
+            buildVCNVKeywordWrongScreen();
+
+    }
+
+    if (
+        vcnvCurrentScreen ===
+        'PUZZLE'
+    ) {
+
+        html +=
+            buildVCNVPuzzleScreen();
+
+    }
+    html += `
+        </div>
+    `;
+
+    return html;
+
+}
+
+// ======================================================
+// VCNV - MÀN HÌNH CHỌN CÂU HỎI
+// ======================================================
+
+function buildVCNVQuestionSelection() {
+
+    let html = '';
+
+    html += `
+        <div class="vcnv-panel">
+
+            <h2>
+                CHỌN CÂU HỎI
+            </h2>
+
+            <div class="vcnv-question-list">
+    `;
+
+
+    vcnvQuestions.forEach(
+        (question, index) => {
+
+            const revealed =
+                vcnvRevealedAnswers.includes(index);
+
+            // Bỏ khoảng trắng khi đếm số ô
+            const characters =
+                question.answer
+                    .replace(/\s/g, '')
+                    .split('');
+
+
+            html += `
+
+                <button
+                    class="vcnv-question-row"
+                    onclick="showVCNVQuestion(${index})"
+                >
+
+                    <span class="vcnv-question-number">
+                        (${index + 1})
+                    </span>
+
+                    <span class="vcnv-answer-circles">
+            `;
+
+
+            characters.forEach(
+                (character) => {
+
+                    html += `
+
+                        <span
+                            class="
+                                vcnv-answer-circle
+                                ${
+                                    revealed
+                                        ? 'revealed'
+                                        : ''
+                                }
+                            "
+                        >
+                            ${
+                                revealed
+                                    ? character
+                                    : ''
+                            }
+                        </span>
+
+                    `;
+
+                }
+            );
+
+
+            html += `
+
+                    </span>
+
+                </button>
+
+            `;
+
+        }
+    );
+
+
+    html += `
+
+            </div>
+
+            <div class="vcnv-question-selection-bottom">
+
+                <button
+                    class="vcnv-secondary-button"
+                    onclick="showVCNVKeywordScreen()"
+                >
+                    ĐIỀN TỪ KHÓA
+                </button>
+
+            </div>
+
+        </div>
+    `;
+
+
+    return html;
+
+}
+
+// ======================================================
+// VCNV - MÀN HÌNH CÂU HỎI
+// ======================================================
+
+function buildVCNVQuestionScreen() {
+
+    const question =
+        vcnvQuestions[
+            vcnvCurrentQuestion
+        ];
+
+    if (!question) {
+        return '';
+    }
+
+
+    return `
+
+        <div class="vcnv-panel">
+
+            <div class="vcnv-question-label">
+
+                CÂU ${vcnvCurrentQuestion + 1}
+                / ${vcnvQuestions.length}
+
+            </div>
+
+            <div
+                id="vcnv-mc-timer"
+                class="vcnv-mc-timer"
+            >
+                20
+            </div>
+
+            <div class="vcnv-question-content">
+
+                ${question.question}
+
+            </div>
+
+
+            <div class="vcnv-answer-preview">
+
+                <div class="vcnv-answer-preview-title">
+                    ĐÁP ÁN
+                </div>
+
+                <div class="vcnv-hidden-answer">
+                    ${
+                        vcnvRevealedAnswers.includes(
+                            vcnvCurrentQuestion
+                        )
+                            ? question.answer
+                            : 'CHƯA CÔNG BỐ'
+                    }
+                </div>
+
+            </div>
+
+
+            <div class="vcnv-action-row">
+
+                <button
+                    class="vcnv-primary-button"
+                    onclick="revealVCNVAnswer()"
+                >
+                    HIỆN ĐÁP ÁN
+                </button>
+
+
+                <button
+                    class="vcnv-secondary-button"
+                    onclick="showVCNVQuestionSelection()"
+                >
+                    QUAY LẠI
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// MÀN HÌNH KẾT QUẢ CÂU VCNV
+// ======================================================
+
+function buildVCNVResultScreen() {
+
+    const results =
+        vcnvQuestionResult.results ||
+        [];
+
+    const questionNumber =
+        Number(
+            vcnvQuestionResult.questionIndex
+        ) + 1;
+
+    let rows = '';
+
+    for (
+        let teamId = 0;
+        teamId < 4;
+        teamId++
+    ) {
+
+        const result =
+            results.find(
+                item =>
+                    Number(
+                        item.teamId
+                    ) === teamId
+            );
+
+        if (!result) {
+            continue;
+        }
+
+        let status;
+
+        if (
+            !result.answered
+        ) {
+
+            status =
+                'KHÔNG TRẢ LỜI';
+
+        } else if (
+            result.correct
+        ) {
+
+            status =
+                'ĐÚNG';
+
+        } else {
+
+            status =
+                'SAI';
+
+        }
+
+        rows += `
+
+            <div class="vcnv-result-row">
+
+                <div class="vcnv-result-team">
+
+                    ${escapeHtml(
+                        result.team
+                    )}
+
+                </div>
+
+
+                <div class="vcnv-result-answer">
+
+                    ${
+                        result.answered
+                            ? escapeHtml(
+                                result.answer
+                              )
+                            : '—'
+                    }
+
+                </div>
+
+
+                <div
+                    class="
+                        vcnv-result-status
+                        ${
+                            result.correct
+                                ? 'correct'
+                                : 'wrong'
+                        }
+                    "
+                >
+
+                    ${status}
+
+                </div>
+
+            </div>
+
+        `;
+
+    }
+
+
+    return `
+
+        <div class="vcnv-panel">
+
+            <h2>
+                KẾT QUẢ CÂU ${questionNumber}
+            </h2>
+
+
+            <div class="vcnv-correct-answer">
+
+                ĐÁP ÁN:
+
+                <strong>
+                    ${escapeHtml(
+                        vcnvQuestionResult.answer
+                    )}
+                </strong>
+
+            </div>
+
+
+            <div class="vcnv-results">
+
+                ${rows}
+
+            </div>
+
+
+            <div class="vcnv-result-actions">
+
+                <button
+                    class="vcnv-primary-button"
+                    onclick="showVCNVPiece()"
+                >
+                    TIẾP TỤC
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+// ======================================================
+// DÒNG KẾT QUẢ 1 ĐỘI
+// ======================================================
+
+function buildVCNVTeamResultRow(
+    teamName
+) {
+
+    return `
+
+        <div class="vcnv-result-row">
+
+            <div>
+                ${teamName}
+            </div>
+
+            <div>
+                —
+            </div>
+
+            <div>
+                —
+            </div>
+
+            <div>
+                0
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// VCNV - MÀN HÌNH MẢNH GHÉP
+// ======================================================
+
+function buildVCNVPieceScreen() {
+
+    const currentPiece =
+        vcnvCurrentQuestion;
+
+
+    function pieceHtml(
+        pieceNumber,
+        pieceClass
+    ) {
+
+        const opened =
+            vcnvRevealedPieces.includes(
+                pieceNumber
+            );
+
+
+        return `
+            <div
+                class="
+                    vcnv-piece
+                    ${pieceClass}
+                    ${opened ? 'opened' : 'closed'}
+                "
+                ${
+                    opened && vcnvImage
+                        ? `style="background-image: url('${vcnvImage}');"`
+                        : ''
+                }
+            >
+                ${
+                    opened
+                        ? ''
+                        : '?'
+                }
+            </div>
+        `;
+
+    }
+
+
+    return `
+
+        <div class="vcnv-panel">
+
+            <div class="vcnv-question-label">
+
+                MẢNH GHÉP CÂU
+                ${currentPiece + 1}
+
+            </div>
+
+            <div class="vcnv-puzzle">
+
+                ${pieceHtml(0, 'piece-1')}
+
+                ${pieceHtml(1, 'piece-2')}
+
+                ${pieceHtml(2, 'piece-3')}
+
+                ${pieceHtml(3, 'piece-4')}
+
+                <!-- ==========================
+                     MẢNH GIỮA
+                     LUÔN ĐÓNG
+                =========================== -->
+
+                <div
+                    class="
+                        vcnv-piece
+                        piece-5
+                        closed
+                    "
+                >
+                    ?
+                </div>
+
+            </div>
+
+            <div class="vcnv-piece-message">
+
+                Mảnh ghép sẽ được mở sau 2 giây...
+
+            </div>
+
+            <div class="vcnv-action-row">
+
+                <button
+                    class="vcnv-primary-button"
+                    onclick="continueVCNV()"
+                >
+                    TIẾP TỤC
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// VCNV - MÀN HÌNH TRẢ LỜI TỪ KHÓA
+// ======================================================
+
+function buildVCNVKeywordScreen() {
+
+    const teamNames = [
+        'Đội Xanh',
+        'Đội Trắng',
+        'Đội Đỏ',
+        'Đội Vàng'
+    ];
+
+    return `
+
+        <div class="vcnv-panel">
+
+            <div class="vcnv-question-label">
+
+                TRẢ LỜI TỪ KHÓA
+
+            </div>
+
+
+            <div class="vcnv-keyword-form">
+
+                <div class="vcnv-team-select">
+
+                    ${teamNames.map(
+                        (teamName, teamId) => {
+
+                            const locked =
+                                vcnvKeywordLockedTeams.includes(
+                                    teamId
+                                );
+
+                            return `
+
+                                <label
+                                    class="
+                                        ${
+                                            locked
+                                                ? 'locked'
+                                                : ''
+                                        }
+                                    "
+                                >
+
+                                    <input
+                                        type="radio"
+                                        name="vcnvKeywordTeam"
+                                        value="${teamId}"
+                                        ${locked ? 'disabled' : ''}
+                                    >
+
+                                    ${teamName}
+
+                                    ${
+                                        locked
+                                            ? `
+                                                <span
+                                                    class="vcnv-team-locked-text"
+                                                >
+                                                    ĐÃ MẤT QUYỀN
+                                                </span>
+                                            `
+                                            : ''
+                                    }
+
+                                </label>
+
+                            `;
+
+                        }
+                    ).join('')}
+
+                </div>
+
+
+                <input
+                    id="vcnvKeywordInput"
+                    class="vcnv-keyword-input"
+                    type="text"
+                    placeholder="Nhập từ khóa..."
+                    autocomplete="off"
+                />
+
+
+                <button
+                    class="vcnv-primary-button"
+                    onclick="submitVCNVKeyword()"
+                >
+                    TRẢ LỜI
+                </button>
+
+            </div>
+
+
+            <div class="vcnv-action-row">
+
+                <button
+                    class="vcnv-secondary-button"
+                    onclick="showVCNVQuestionSelection()"
+                >
+                    QUAY LẠI
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// XỬ LÝ TRẢ LỜI TỪ KHÓA
+// ======================================================
+
+function submitVCNVKeyword() {
+
+    const selectedTeam =
+        document.querySelector(
+            'input[name="vcnvKeywordTeam"]:checked'
+        );
+
+
+    if (!selectedTeam) {
+
+        alert(
+            'Vui lòng chọn đội.'
+        );
+
+        return;
+
+    }
+
+
+    const input =
+        document.getElementById(
+            'vcnvKeywordInput'
+        );
+
+
+    const answer =
+        input.value.trim();
+
+
+    if (!answer) {
+
+        alert(
+            'Vui lòng nhập từ khóa.'
+        );
+
+        return;
+
+    }
+
+
+    const teamId =
+        Number(
+            selectedTeam.value
+        );
+
+
+    // ------------------------------------------
+    // Đội đã bị loại
+    // Không alert, chỉ bỏ qua
+    // ------------------------------------------
+
+    if (
+        vcnvKeywordLockedTeams.includes(
+            teamId
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    const normalizedAnswer =
+        normalizeVCNVText(
+            answer
+        );
+
+
+    const normalizedKeyword =
+        normalizeVCNVText(
+            vcnvKeyword
+        );
+
+
+    const correct =
+        normalizedAnswer ===
+        normalizedKeyword;
+
+
+    // ==========================================
+    // TRẢ LỜI ĐÚNG
+    // ==========================================
+
+    if (correct) {
+
+        // Xác định điểm khi trả lời đúng từ khóa
+        const revealedCount =
+            vcnvRevealedAnswers.length;
+
+        if (
+            revealedCount >= 4
+        ) {
+
+            vcnvWinnerKeywordPoints =
+                20;
+
+        } else if (
+            revealedCount === 3
+        ) {
+
+            vcnvWinnerKeywordPoints =
+                30;
+
+        } else if (
+            revealedCount === 2
+        ) {
+
+            vcnvWinnerKeywordPoints =
+                40;
+
+        } else if (
+            revealedCount === 1
+        ) {
+
+            vcnvWinnerKeywordPoints =
+                50;
+
+        } else {
+
+            vcnvWinnerKeywordPoints =
+                60;
+
+        }
+
+        // Đội thắng
+        vcnvWinnerTeam =
+            teamId;
+        
+        // ------------------------------------------
+        // CỘNG ĐIỂM TỪ KHÓA
+        // ------------------------------------------
+
+        if (
+            !vcnvKeywordScored
+        ) {
+
+            scores[teamId][activeBranch] +=
+                vcnvWinnerKeywordPoints;
+
+            vcnvKeywordScored =
+                true;
+
+
+            refreshScoreboard();
+
+
+            console.log(
+                'VCNV: cộng điểm từ khóa:',
+                {
+                    team:
+                        teams[teamId],
+
+                    branch:
+                        getActiveBranchLabel(),
+
+                    points:
+                        vcnvWinnerKeywordPoints
+                }
+            );
+
+        }
+
+        // Kết thúc VCNV
+        vcnvFinished =
+            true;
+
+        vcnvCurrentScreen =
+            'FINISHED';
+
+        renderVCNV();
+
+        return;
+
+    }
+
+
+    // ==========================================
+    // TRẢ LỜI SAI
+    // ==========================================
+
+    if (
+        !vcnvKeywordLockedTeams.includes(
+            teamId
+        )
+    ) {
+
+        vcnvKeywordLockedTeams.push(
+            teamId
+        );
+
+    }
+
+    vcnvWrongKeywordTeam =
+        teamId;
+
+    vcnvCurrentScreen =
+        'KEYWORD_WRONG';
+
+    renderVCNV();
+
+}
+
+// ======================================================
+// QUAY LẠI SAU KHI TRẢ LỜI TỪ KHÓA SAI
+// ======================================================
+
+function returnFromVCNVKeywordWrong() {
+
+    vcnvCurrentScreen =
+        vcnvPreviousScreen;
+
+    renderVCNV();
+
+}
+
+// ======================================================
+// CHUẨN HÓA TEXT
+// ======================================================
+
+function normalizeVCNVText(
+    value
+) {
+
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(
+            /[\u0300-\u036f]/g,
+            ''
+        )
+        .replace(
+            /đ/g,
+            'd'
+        )
+        .replace(
+            /\s+/g,
+            ''
+        );
+
+}
+
+// ======================================================
+// MÀN HÌNH KẾT THÚC VCNV
+// ======================================================
+
+function buildVCNVFinishedScreen() {
+
+    const teamNames = [
+        'Đội Xanh',
+        'Đội Trắng',
+        'Đội Đỏ',
+        'Đội Vàng'
+    ];
+
+    const winnerName =
+        teamNames[vcnvWinnerTeam] ||
+        'Đội thắng';
+
+
+    return `
+
+        <div class="vcnv-finished-panel">
+
+            <div class="vcnv-finished-title">
+                VƯỢT CHƯỚNG NGẠI VẬT
+            </div>
+
+
+            <div class="vcnv-finished-subtitle">
+                KẾT THÚC PHẦN THI
+            </div>
+
+
+            <div class="vcnv-winner-icon">
+                🏆
+            </div>
+
+
+            <div class="vcnv-winner-title">
+                ${winnerName}
+            </div>
+
+
+            <div class="vcnv-winner-message">
+                ĐÃ TRẢ LỜI ĐÚNG TỪ KHÓA
+            </div>
+
+
+            <div class="vcnv-final-score-box">
+
+                <div class="vcnv-score-label">
+                    ĐIỂM TỪ KHÓA
+                </div>
+
+                <div class="vcnv-score-value">
+                    +${vcnvWinnerKeywordPoints}
+                </div>
+
+            </div>
+
+
+            <div class="vcnv-finished-message">
+
+                Phần thi Vượt chướng ngại vật
+                đã kết thúc.
+
+            </div>
+
+
+            <button
+                class="vcnv-finish-button"
+                onclick="finishVCNV()"
+            >
+                TIẾP TỤC
+            </button>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// KẾT THÚC VCNV
+// ======================================================
+
+function finishVCNV() {
+
+    vcnvFinished =
+        true;
+
+    // Tạm thời quay về màn hình chọn phần thi.
+    // Phần này sẽ nối với hệ thống điểm và luồng
+    // chương trình chính ở bước sau.
+
+    if (typeof showPacks === 'function') {
+
+        showPacks();
+
+    }
+
+}
+
+// ======================================================
+// MÀN HÌNH TRẢ LỜI TỪ KHÓA SAI
+// ======================================================
+
+function buildVCNVKeywordWrongScreen() {
+
+    const teamNames = [
+        'Đội Xanh',
+        'Đội Trắng',
+        'Đội Đỏ',
+        'Đội Vàng'
+    ];
+
+    const teamName =
+        teamNames[vcnvWrongKeywordTeam] ||
+        'Đội';
+
+
+    return `
+
+        <div class="vcnv-finished-panel">
+
+            <div class="vcnv-finished-title">
+                TRẢ LỜI TỪ KHÓA
+            </div>
+
+
+            <div class="vcnv-wrong-icon">
+                ✕
+            </div>
+
+
+            <div class="vcnv-wrong-title">
+                KHÔNG CHÍNH XÁC
+            </div>
+
+
+            <div class="vcnv-wrong-team">
+                ${teamName}
+            </div>
+
+
+            <div class="vcnv-wrong-message">
+
+                Đáp án từ khóa không chính xác.
+
+                <br>
+
+                Đội này không còn quyền
+                trả lời từ khóa.
+
+            </div>
+
+
+            <button
+                class="vcnv-finish-button"
+                onclick="returnFromVCNVKeywordWrong()"
+            >
+                TIẾP TỤC
+            </button>
+
+        </div>
+
+    `;
+
+}
+
+function showVCNVCurrentPuzzle() {
+
+    vcnvCurrentScreen =
+        'PUZZLE';
+
+    renderVCNV();
+
+}
+
+function buildVCNVPuzzleScreen() {
+
+    return `
+
+        <div class="vcnv-puzzle-panel">
+
+            <h2>
+                MẢNH GHÉP
+            </h2>
+
+
+            <div class="vcnv-puzzle-placeholder">
+
+                Mảnh ghép câu
+                ${vcnvQuestionResult.questionIndex + 1}
+
+            </div>
+
+
+            <button
+                class="vcnv-finish-button"
+                onclick="showVCNVQuestionSelection()"
+            >
+
+                TIẾP TỤC
+
+            </button>
+
+        </div>
+
+    `;
+
+}
+
+// ======================================================
+// TIMER VCNV - MÀN HÌNH MC
+// ======================================================
+
+function startVCNVMcTimer(deadline) {
+
+    clearInterval(
+        vcnvMcTimer
+    );
+
+    vcnvDeadline =
+        deadline;
+
+    updateVCNVMcTimer();
+
+    vcnvMcTimer =
+        setInterval(
+            updateVCNVMcTimer,
+            100
+        );
+
+}
+
+function updateVCNVMcTimer() {
+
+    const timerElement =
+        document.getElementById(
+            'vcnv-mc-timer'
+        );
+
+    if (!timerElement) {
+        return;
+    }
+
+    const remainingMs =
+        Math.max(
+            0,
+            vcnvDeadline - Date.now()
+        );
+
+    const seconds =
+        Math.ceil(
+            remainingMs / 1000
+        );
+
+    timerElement.textContent =
+        seconds;
+
+    if (remainingMs <= 0) {
+
+        clearInterval(
+            vcnvMcTimer
+        );
+
+        vcnvMcTimer =
+            null;
+
+        timerElement.textContent =
+            '0';
+
+    }
+
 }
